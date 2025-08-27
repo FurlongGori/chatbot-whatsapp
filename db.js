@@ -1,64 +1,82 @@
-import { MongoClient } from "mongodb";
-if (!pendentes.length) return callback([]);
+// db.js (MongoDB Atlas)
+import { MongoClient, ObjectId } from "mongodb";
 
+const uri = process.env.MONGO_URI; // coloque sua URI do MongoDB Atlas no Railway ou .env
+const client = new MongoClient(uri);
+let db;
 
-const bulkOps = pendentes.map((t) => ({
-updateOne: {
-filter: { nome: t.responsavel },
-update: { $inc: { pontos: -1 } },
-upsert: true
-}
-}));
-
-
-if (bulkOps.length) await db.collection("ranking").bulkWrite(bulkOps);
-callback(pendentes);
-} catch (err) {
-console.error("penalizarPendentes error:", err);
-callback([]);
-}
-})
-.catch((e) => callback([]));
+async function conectar() {
+  if (!db) {
+    await client.connect();
+    db = client.db("checklist"); // nome do banco
+    console.log("✅ Conectado ao MongoDB Atlas!");
+  }
+  return db;
 }
 
+// ---- Funções ----
 
-// Retorna ranking ordenado
-export function ranking(callback = () => {}) {
-ready
-.then(async () => {
-try {
-const rows = await db
-.collection("ranking")
-.find({})
-.sort({ pontos: -1, nome: 1 })
-.toArray();
-callback(rows || []);
-} catch (err) {
-console.error("ranking error:", err);
-callback([]);
-}
-})
-.catch((e) => callback([]));
+// Adiciona 1 tarefa
+export async function adicionarTarefa(responsavel, tarefa, pontos) {
+  const db = await conectar();
+  await db.collection("tarefas").insertOne({
+    responsavel,
+    tarefa,
+    pontos,
+    concluido: false
+  });
 }
 
-
-// Resetar ranking (usado no fim do mês)
-export function resetarRanking(cb = () => {}) {
-ready
-.then(async () => {
-try {
-await db.collection("ranking").deleteMany({});
-cb();
-} catch (err) {
-console.error("resetarRanking error:", err);
-cb(err);
-}
-})
-.catch((e) => cb(e));
+// Lista todas
+export async function listarTarefas() {
+  const db = await conectar();
+  return await db.collection("tarefas").find().sort({ _id: 1 }).toArray();
 }
 
+// Concluir tarefa
+export async function concluirTarefa(id) {
+  const db = await conectar();
+  const tarefa = await db.collection("tarefas").findOne({ _id: new ObjectId(id) });
+  if (!tarefa || tarefa.concluido) return null;
 
-// exportar função para fechar conexão caso precise (opcional)
-export async function fecharConexao() {
-if (client) await client.close();
+  await db.collection("tarefas").updateOne(
+    { _id: new ObjectId(id) },
+    { $set: { concluido: true } }
+  );
+
+  await db.collection("ranking").updateOne(
+    { nome: tarefa.responsavel },
+    { $inc: { pontos: tarefa.pontos } },
+    { upsert: true }
+  );
+
+  return tarefa;
+}
+
+// Penalizar pendentes
+export async function penalizarPendentes() {
+  const db = await conectar();
+  const pendentes = await db.collection("tarefas").find({ concluido: false }).toArray();
+
+  for (let t of pendentes) {
+    await db.collection("ranking").updateOne(
+      { nome: t.responsavel },
+      { $inc: { pontos: -1 } },
+      { upsert: true }
+    );
+  }
+
+  return pendentes;
+}
+
+// Ranking
+export async function ranking() {
+  const db = await conectar();
+  return await db.collection("ranking").find().sort({ pontos: -1, nome: 1 }).toArray();
+}
+
+// Resetar ranking
+export async function resetarRanking() {
+  const db = await conectar();
+  await db.collection("ranking").deleteMany({});
 }
