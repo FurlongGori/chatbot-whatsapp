@@ -1,95 +1,64 @@
-import sqlite3 from "sqlite3";
+import { MongoClient } from "mongodb";
+if (!pendentes.length) return callback([]);
 
-const db = new sqlite3.Database("./tarefas.db");
 
-// Tabelas
-db.serialize(() => {
-  db.run(`CREATE TABLE IF NOT EXISTS tarefas (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    responsavel TEXT,
-    tarefa TEXT,
-    pontos INTEGER,
-    concluido INTEGER DEFAULT 0
-  )`);
+const bulkOps = pendentes.map((t) => ({
+updateOne: {
+filter: { nome: t.responsavel },
+update: { $inc: { pontos: -1 } },
+upsert: true
+}
+}));
 
-  db.run(`CREATE TABLE IF NOT EXISTS ranking (
-    nome TEXT PRIMARY KEY,
-    pontos INTEGER DEFAULT 0
-  )`);
-});
 
-// ---- Funções ----
-
-// Adiciona 1 tarefa
-export function adicionarTarefa(responsavel, tarefa, pontos, cb = () => {}) {
-  db.run(
-    "INSERT INTO tarefas (responsavel, tarefa, pontos, concluido) VALUES (?, ?, ?, 0)",
-    [responsavel, tarefa, pontos],
-    cb
-  );
+if (bulkOps.length) await db.collection("ranking").bulkWrite(bulkOps);
+callback(pendentes);
+} catch (err) {
+console.error("penalizarPendentes error:", err);
+callback([]);
+}
+})
+.catch((e) => callback([]));
 }
 
-// Lista todas
-export function listarTarefas(callback) {
-  db.all("SELECT * FROM tarefas ORDER BY id ASC", (err, rows) => {
-    if (err) {
-      console.error(err);
-      callback([]);
-    } else {
-      callback(rows || []);
-    }
-  });
-}
-
-// Concluir tarefa (retorna também os dados da tarefa)
-export function concluirTarefa(id, callback) {
-  db.get("SELECT * FROM tarefas WHERE id = ?", [id], (err, row) => {
-    if (err) return callback(err, 0, null);
-    if (!row || row.concluido) return callback(null, 0, null);
-
-    db.run("UPDATE tarefas SET concluido = 1 WHERE id = ?", [id], function (uErr) {
-      if (uErr) return callback(uErr, 0, null);
-
-      // upsert no ranking somando pontos da tarefa concluída
-      db.run(
-        `INSERT INTO ranking (nome, pontos) VALUES (?, ?)
-         ON CONFLICT(nome) DO UPDATE SET pontos = ranking.pontos + excluded.pontos`,
-        [row.responsavel, row.pontos],
-        (rErr) => callback(rErr, this.changes, row)
-      );
-    });
-  });
-}
-
-// Penaliza 1 ponto por tarefa não concluída (retorna lista penalizada)
-export function penalizarPendentes(callback) {
-  db.all("SELECT * FROM tarefas WHERE concluido = 0", (err, rows) => {
-    if (err) {
-      console.error(err);
-      return callback([]);
-    }
-    const pendentes = rows || [];
-    // subtrai 1 ponto por tarefa pendente
-    const stmt = db.prepare(
-      `INSERT INTO ranking (nome, pontos) VALUES (?, ?)
-       ON CONFLICT(nome) DO UPDATE SET pontos = ranking.pontos + excluded.pontos`
-    );
-    pendentes.forEach((t) => stmt.run([t.responsavel, -1]));
-    stmt.finalize(() => callback(pendentes));
-  });
-}
 
 // Retorna ranking ordenado
-export function ranking(callback) {
-  db.all("SELECT * FROM ranking ORDER BY pontos DESC, nome ASC", (err, rows) => {
-    if (err) {
-      console.error(err);
-    }
-    callback(rows || []);
-  });
+export function ranking(callback = () => {}) {
+ready
+.then(async () => {
+try {
+const rows = await db
+.collection("ranking")
+.find({})
+.sort({ pontos: -1, nome: 1 })
+.toArray();
+callback(rows || []);
+} catch (err) {
+console.error("ranking error:", err);
+callback([]);
 }
+})
+.catch((e) => callback([]));
+}
+
 
 // Resetar ranking (usado no fim do mês)
 export function resetarRanking(cb = () => {}) {
-  db.run("DELETE FROM ranking", cb);
+ready
+.then(async () => {
+try {
+await db.collection("ranking").deleteMany({});
+cb();
+} catch (err) {
+console.error("resetarRanking error:", err);
+cb(err);
+}
+})
+.catch((e) => cb(e));
+}
+
+
+// exportar função para fechar conexão caso precise (opcional)
+export async function fecharConexao() {
+if (client) await client.close();
 }
