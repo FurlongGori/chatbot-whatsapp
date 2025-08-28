@@ -19,17 +19,29 @@ async function startSock() {
     printQRInTerminal: true
   });
 
-  sock.ev.on("connection.update", (update) => {
+  sock.ev.on("connection.update", async (update) => {
     const { connection, lastDisconnect, qr } = update;
+
     if (qr) {
+      console.log("📱 Escaneie o QR Code abaixo para conectar:");
       qrcode.generate(qr, { small: true });
     }
+
     if (connection === "close") {
-      const shouldReconnect =
-        lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
-      if (shouldReconnect) {
+      const reason = lastDisconnect?.error?.output?.statusCode;
+
+      if (reason === DisconnectReason.loggedOut) {
+        console.log("❌ Dispositivo removido, limpando credenciais...");
+        fs.rmSync("auth", { recursive: true, force: true }); // remove credenciais antigas
+        startSock(); // força novo QR
+      } else {
+        console.log("⚠️ Conexão perdida, tentando reconectar...");
         startSock();
       }
+    }
+
+    if (connection === "open") {
+      console.log("✅ Bot conectado com sucesso!");
     }
   });
 
@@ -45,7 +57,6 @@ async function startSock() {
 
     // --- Comandos ---
 
-    // adicionar tarefa → add Nome: Tarefa: Pontos
     if (lower.startsWith("add")) {
       const partes = texto.substring(3).trim().split(":");
       if (partes.length < 3) {
@@ -54,13 +65,12 @@ async function startSock() {
         });
         return;
       }
-      const [responsavel, tarefa, pontos] = partes.map(p => p.trim());
+      const [responsavel, tarefa, pontos] = partes.map((p) => p.trim());
       await adicionarTarefa(responsavel, tarefa, parseInt(pontos));
       await sock.sendMessage(remetente, { text: "✅ Tarefa adicionada!" });
       return;
     }
 
-    // listar tarefas
     if (lower === "listar") {
       const tarefas = await listarTarefas();
       if (!tarefas.length) {
@@ -79,7 +89,6 @@ async function startSock() {
       return;
     }
 
-    // concluir tarefa
     if (lower.startsWith("concluir")) {
       const id = texto.replace("concluir", "").trim();
       try {
@@ -98,7 +107,6 @@ async function startSock() {
       return;
     }
 
-    // ranking
     if (lower === "ranking") {
       const rank = await ranking();
       if (!rank.length) {
@@ -112,7 +120,6 @@ async function startSock() {
       return;
     }
 
-    // penalizar
     if (lower === "penalizar") {
       const penalizados = await penalizarPendentes();
       if (!penalizados.length) {
@@ -125,7 +132,6 @@ async function startSock() {
       return;
     }
 
-    // resetar ranking
     if (lower === "resetar") {
       await resetarRanking();
       await sock.sendMessage(remetente, { text: "♻️ Ranking resetado!" });
